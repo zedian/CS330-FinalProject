@@ -3,7 +3,6 @@ import tempfile
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-import torchvision
 import torch.nn.functional as F
 
 from absl import app
@@ -13,6 +12,9 @@ from ml_collections import config_flags
 from torch import nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
+
+import datasets
+
 
 DEVICE = 'cuda' if torch.cuda.is_available() else 'cpu'
 FLAGS = flags.FLAGS
