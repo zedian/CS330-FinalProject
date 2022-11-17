@@ -8,3 +8,6 @@ def accuracy(y_hat, y):
     y = y.view(-1, n_classes)
     n_correct = torch.sum(y_hat == y)
     return n_correct / y_hat.numel()
+
+
+def smooth
