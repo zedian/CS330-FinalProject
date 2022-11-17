@@ -47,6 +47,22 @@ class MNIST:
     return len(self.x)
 
 
+class MNISTN:
+  """MNIST-N (add Gaussian noise) dataset."""
+
+  def __init__(self, train=True):
+    mnist = torchvision.datasets.MNIST('/tmp/mnist', download=True, train=train)
+    self.x = mnist.data / 255 + torch.randn_like(mnist.data.float()) * 0.1
+    self.x = (self.x - self.x.min()) / (self.x.max() - self.x.min())
+    self.y = mnist.targets
+
+  def __getitem__(self, idx):
+    return self.x[idx], self.y[idx]
+
+  def __len__(self):
+    return len(self.x)
+
+
 class FashionMNIST:
   """FashionMNIST dataset."""
 
