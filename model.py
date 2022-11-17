@@ -62,3 +62,40 @@ class Shareable(nn.Module):
 
     def forward(self, x, task_key):
         return self.task_mdls[task_key](x)
+
+
+class ConvBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Conv2d(1, 64, kernel_size=(3, 3)),
+            nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(64, 128, kernel_size=(3, 3)),
+            nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+            nn.Conv2d(128, 256, kernel_size=(3, 3)),
+            nn.ReLU(),
+            nn.AvgPool2d(2, 2),
+        )
+
+    def forward(self, x):
+        # assume x.shape == (B, 1, 28, 28)
+        return self.net(x).view(x.shape[0], -1)
+
+
+class LinearBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(28 * 28, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+        )
+
+    def forward(self, x):
+        # assume x.shape == (B, 1, 28, 28)
+        x = x.view(x.shape[0], -1)
+        return self.net(x).view(x.shape[0], -1)
