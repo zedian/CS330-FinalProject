@@ -25,7 +25,7 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4):
 
       batch = next(task_iter)
       x, y = batch
-      pred = model(x, task_name)
+      pred = model(x, task=task_name)
       loss = task_loss_fn(pred, y)
 
       # avoid gradient accumulation bugs
@@ -73,7 +73,7 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100):
 
         batch = next(task_iter)
         x, y = batch
-        logits = model(x, task_name)
+        logits = model(x, task=task_name)
         loss = loss_fn(logits, y)
         loss.backward()
         task_losses[task_name] = loss.item()
@@ -102,7 +102,7 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100):
             x = torch.stack(x)
             y = torch.stack(y)
 
-            logits = model(x, task_name)
+            logits = model(x, task=task_name)
             task_eval_losses[task_name] = loss_fn(logits, y).item()
             task_eval_metrics[task_name] = metric_fn(predict_fn(logits), y)
 

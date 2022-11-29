@@ -60,8 +60,8 @@ class Shareable(nn.Module):
         ref._parameters[parameter_name] = param
 
 
-    def forward(self, x, task_key):
-        return self.task_mdls[task_key](x)
+    def forward(self, task, **x):
+        return self.task_mdls[task](**x)
 
 
 class ConvBackbone(nn.Module):
