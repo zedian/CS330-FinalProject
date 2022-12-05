@@ -1,7 +1,8 @@
 import copy
+import torch
+import gc
 
 from torch import nn
-
 
 class Shareable(nn.Module):
     """Surgical parameter sharing module.
@@ -18,18 +19,27 @@ class Shareable(nn.Module):
         assert isinstance(task_keys, list)
         assert isinstance(shared_params, list)
 
+        # r = torch.cuda.memory_reserved(0)
+        # a = torch.cuda.memory_allocated(0)
+        # print(r-a)
         base_module_parameters = mdl.state_dict()
-
         k2s = {sp: '_'.join(sp.split('.')) for i, sp in enumerate(shared_params)}
-
+        # print(base_module_parameters)
         self.shared = nn.ParameterDict({
             k2s[sp]: nn.Parameter(base_module_parameters[sp].clone())
             for sp in shared_params
         })
+        # clone = mdl.__class__().load_state_dict(self.shared)
+
+        mdl_clone = copy.deepcopy(mdl)
+        mdl_clone = nn.Sequential(*list(mdl_clone.children())[:-1])
+        # mdl_clone = LinearBackbone()
+        # self.t0_mdl = mdl
+        # self.t1_mdl = mdl
 
         self.task_mdls = nn.ModuleDict({
-            task_key: copy.deepcopy(mdl)
-            for task_key in task_keys
+            "t0": mdl,
+            "t1": mdl_clone
         })
 
         for sp in shared_params:
@@ -44,6 +54,8 @@ class Shareable(nn.Module):
         assert isinstance(param, nn.Parameter), 'Must be an nn.Parameter'
 
         comps = key.split('.')
+        # print(mdl._modules)
+        # print(comps)
         ref = mdl
         while len(comps) > 1:
             comp = comps.pop(0)
@@ -54,15 +66,24 @@ class Shareable(nn.Module):
             else:
                 raise ValueError('tree traversal failed')
 
+        # print(ref._parameters.keys())
         parameter_name = comps.pop()
         assert len(comps) == 0
         del ref._parameters[parameter_name]
         ref._parameters[parameter_name] = param
+        gc.collect()
 
 
-    def forward(self, task, **x):
-        return self.task_mdls[task](**x)
-
+    def forward(self, x, task_key):
+        # r = torch.cuda.memory_reserved(0)
+        # a = torch.cuda.memory_allocated(0)
+        # print(r-a)
+        # if task_key == "t0":
+        #   return self.t0_mdl(x)
+        # if task_key == "t1":
+        #   return self.t0_mdl(x)
+        # return None
+        return self.task_mdls[task_key](x)
 
 class ConvBackbone(nn.Module):
     def __init__(self):

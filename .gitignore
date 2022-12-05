@@ -1,6 +1,10 @@
 .ipynb_checkpoints
 __pycache__
 
+data/*
+Auto-RGN.ipynb
+CIFAR-10-C/*
+cifar10_models/*
 ## Core latex/pdflatex auxiliary files:
 *.aux
 *.lof
