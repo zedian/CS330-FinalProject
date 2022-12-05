@@ -22,16 +22,16 @@ from typing import List, Optional, Tuple, Union
 def str_strip(s):
     return s.replace(' .', '.')
 
-    
-    
+
+
 def check_dataset_integrity(d):
     for s in d['x']:
         assert ' .' not in s, s
         assert '\n' not in s, s
         #assert '..' not in s, s
 def get_dataset(dataset: str):
-    
-    
+
+
     if dataset == 'glue/cola':
         def transform_strip(row):
             s = row['sentence']
@@ -47,12 +47,12 @@ def get_dataset(dataset: str):
         d_val = d_val.rename_columns({'sentence': 'x', 'label': 'y'})
         #check_dataset_integrity(d_val)
         return d_train, d_val
-    
+
     if dataset == 'glue/mrpc':
         def transform(row):
             row['sentence'] = row['sentence1'] + ' ' + row['sentence2']
             return row
-            
+
         d_train = datasets.load_dataset('glue', 'mrpc', split='train')
         d_train = d_train.map(transform)
         d_train = d_train.rename_columns({'sentence': 'x', 'label': 'y'})
@@ -62,7 +62,7 @@ def get_dataset(dataset: str):
         d_val = d_val.rename_columns({'sentence': 'x', 'label': 'y'})
         #check_dataset_integrity(d_val)
         return d_train, d_val
-    
+
     if dataset == 'glue/qnli':
         def transform(row):
             row['sentence'] = row['question'] + ' ' + row['sentence']
@@ -77,34 +77,34 @@ def get_dataset(dataset: str):
         #check_dataset_integrity(d_val)
         return d_train, d_val
     assert False, f"Unknown dataset: {dataset}"
-    
+
 class ClassificationDataGenerator:
-    
+
     def __init__(self, dataset, tokenizer, device, batchSize=4):
         self.dataset = dataset
         self.tokenizer = tokenizer
         self.device = device
         self.batchSize = batchSize
-        
+
     def __len__(self):
         return len(self.dataset['y']) // self.batchSize
-    
+
     def __getitem__(self, idx):
         batch = range(idx*self.batchSize, (idx+1)*self.batchSize)
         x = self.tokenizer([self.dataset['x'][i] for i in batch],
                            return_tensors='pt', padding=True, truncation=True, max_length=100).to(self.device)
         y = T.tensor([self.dataset['y'][i] for i in batch], device=self.device)
         return x,y
-    
+
     def get_all(self, cutoff=None):
         x = self.tokenizer(self.dataset['x'] if cutoff is None else self.dataset[:cutoff]['x'],
                            return_tensors='pt', padding=True, truncation=True, max_length=100).to(self.device)
         y = T.tensor(self.dataset['y'] if cutoff is None else self.dataset[:cutoff]['y'],
                      device=self.device)
         return x,y
-        
-    
-    
+
+
+
 ### Model Functions ###
 def model_layer_select(model):
     if model.name_or_path == 'prajjwal1/bert-medium':
@@ -112,12 +112,12 @@ def model_layer_select(model):
         tunables = tunables[:5]
         parameters = [p for l in tunables for p in l.parameters()]
         return parameters
-    
+
 def get_loss(y, labels):
     return TNF.cross_entropy(y, labels)
 def get_acc(y, labels):
     return TmF.accuracy(y.argmax(axis=-1), labels)
-    
+
 def get_model_and_tokenizer(modelName: str, Cls, **model_kwargs):
 
     m = Cls.from_pretrained(modelName, **model_kwargs)
@@ -142,16 +142,16 @@ def get_stop_tokens(tokenizer, stop_string: str = '.') -> int:
         if tokenizer.decode(idx) == stop_string:
             tokens.append(idx)
     return tokens
-    
+
 class TaskAwareBert(TN.Module):
-    
+
     def __init__(self, bert, tasks, topology):
         super().__init__()
-        
+
         self.topology = topology
-        
+
         assert topology in {'shared', 'separate', 'surgical'}
-        
+
         if topology == 'shared':
             self.backbone = bert
             self.taskHeads = {
@@ -165,12 +165,19 @@ class TaskAwareBert(TN.Module):
                 for task in tasks
             }
         elif topology == 'surgical':
+            sharedParams = [x for x in bert.state_dict().keys()
+                            if 'embedding' not in x]
             self.backbone = model.Shareable(
                 mdl=bert,
                 task_keys=tasks,
-                shared_params=list(bert.state_dict().keys())
+                shared_params=sharedParams
             )
-            
+    @property
+    def backbone_trainables(self):
+        assert self.topology == 'shared'
+        return [x for x in self.backbone.state_dict().keys()
+                if 'embedding' not in x]
+
     def forward(self, x, task):
         if self.topology == 'shared':
             logits = self.internal_forward(task, **x)
@@ -179,7 +186,7 @@ class TaskAwareBert(TN.Module):
             return self.taskHeads[task](**x).logits
         elif self.topology == 'surgical':
             return self.backbone(task, **x).logits
-        
+
     def internal_forward(
         self,
         task: str,
@@ -218,7 +225,7 @@ class TaskAwareBert(TN.Module):
 
         pooled_output = self.backbone.dropout(pooled_output)
         return self.taskHeads[task](pooled_output)
-    
+
 ### Training/Evaluation ###
 def eval_model(model, tokenizer, ds_val, device):
     x = tokenizer(ds_val['x'], return_tensors='pt', padding=True, truncation=True, max_length=100).to(device)
@@ -227,18 +234,18 @@ def eval_model(model, tokenizer, ds_val, device):
         logits = model(**x).logits
     return get_acc(logits, y)
 def finetune_selected(model, ds_train, ds_val, tokenizer, device='cuda', validationCutoff=500):
-    
+
     model.to(device)
     val_acc = eval_model(model, tokenizer, ds_val, device)
     print(f"Before validation accuracy: {val_acc}")
 
     optimizer = TO.Adam(model_layer_select(model), lr=1e-4)
-    
+
     generator_train = ClassificationDataGenerator(ds_train, tokenizer, device)
-    
+
     xAll = tokenizer(ds_train['x'][:validationCutoff], return_tensors='pt', padding=True, truncation=True, max_length=100).to(device)
     yAll = T.tensor(ds_train['y'][:validationCutoff], device=device)
-    
+
     iterant = tqdm.tqdm(generator_train)
     for step,(x_,y_) in enumerate(iterant):
         logits = model(**x_).logits
@@ -253,17 +260,17 @@ def finetune_selected(model, ds_train, ds_val, tokenizer, device='cuda', validat
             with T.inference_mode():
                 total_acc = get_acc(model(**xAll).logits, yAll)
             iterant.set_description(f'Fine-tuning acc: {total_acc:.04f}')
-            
+
             # No thresholding accuracy
             #if total_acc > 0.75:
             #    break
-    
+
     val_acc = eval_model(model, tokenizer, ds_val, device)
     print(f"After validation accuracy: {val_acc}")
 
-    
+
 if __name__ == '__main__':
-    
+
     parser = argparse.ArgumentParser(
         prog = 'Language Multi-tasking experiments',
         description = 'Trains GPT2')
@@ -271,12 +278,9 @@ if __name__ == '__main__':
     parser.add_argument('--device', default='cuda')
     parser.add_argument('--debug', action='store_true')
     args = parser.parse_args()
-    
+
     model, tokenizer = get_model_and_tokenizer(args.model, transformers.AutoModelForSequenceClassification)
     stop_tokens = get_stop_tokens(tokenizer)
     ds_train, ds_val = get_dataset('glue/mrpc')
     finetune_selected(model, ds_train, ds_val
                       , tokenizer, args.device)
-    
-    
-    

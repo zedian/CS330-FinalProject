@@ -5,10 +5,13 @@ from tqdm import tqdm
 import utils
 
 
-def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE="cpu", param_keys=[]):
+def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[]):
   """Compute per-task gradients."""
 
   opt = torch.optim.Adam(model.parameters(), lr=lr)
+
+  if DEVICE is None:
+      DEVICE = model.device
 
   step = 0
   losses = []
@@ -35,6 +38,9 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE="cpu", param_keys=
       task_grads[task_name] = utils.sub_state_dicts(utils.clone_grads(model, param_keys), running_grads)
       task_losses[task_name] = loss.item()
 
+    taskLossesValuesText = [f"{x:.3f}" for x in task_losses.values()]
+    pbar.set_description(f"Losses: {'.'.join(taskLossesValuesText)}")
+
     opt.step()
 
     losses.append(task_losses)
@@ -47,8 +53,11 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE="cpu", param_keys=
   return grads
 
 
-def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEVICE="cpu"):
+def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEVICE=None):
     opt = torch.optim.Adam(model.parameters(), lr=lr)
+
+    if DEVICE is None:
+        DEVICE = model.device
 
     step = 0
 
