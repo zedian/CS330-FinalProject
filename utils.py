@@ -21,7 +21,7 @@ def grad_dict(loss, model):
 def clone_grads(model, param_keys):
     names, params = zip(*model.named_parameters())
     key_params = [param for n, param in zip(names, params) if n in param_keys]
-    grads = [p.grad if p.grad is None else p.grad.clone() for p in key_params]
+    grads = [p.grad if p.grad is None else p.grad.clone().detach().cpu() for p in key_params]
     return dict(zip(param_keys, grads))
 
 
@@ -36,6 +36,7 @@ def sub_state_dicts(a, b):
 def stack_grad(grad_dict_list, task_name, param_name, flatten=True):
     grads = [g[task_name][param_name] for g in grad_dict_list]
     return torch.stack(grads).view(len(grads), -1)
+    # return np.array(grads)
 
 
 def low_pass_filter(x, filter_size=25):
