@@ -32,14 +32,11 @@ class Shareable(nn.Module):
         # clone = mdl.__class__().load_state_dict(self.shared)
 
         mdl_clone = copy.deepcopy(mdl)
-        mdl_clone = nn.Sequential(*list(mdl_clone.children())[:-1])
-        # mdl_clone = LinearBackbone()
-        # self.t0_mdl = mdl
-        # self.t1_mdl = mdl
 
+        assert len(task_keys) == 2
         self.task_mdls = nn.ModuleDict({
-            "t0": mdl,
-            "t1": mdl_clone
+            task_keys[0]: mdl,
+            task_keys[1]: mdl_clone
         })
 
         for sp in shared_params:
@@ -55,16 +52,18 @@ class Shareable(nn.Module):
 
         comps = key.split('.')
         # print(mdl._modules)
-        # print(comps)
         ref = mdl
         while len(comps) > 1:
             comp = comps.pop(0)
-            if comp in ref._modules:
+            if comp == 'bert':
+                ref = ref.bert
+            elif comp in ref._modules:
                 ref = ref._modules[comp]
             elif comp in ref._parameters:
                 ref = ref._parameters[comp]
             else:
-                raise ValueError('tree traversal failed')
+                print(ref)
+                raise ValueError(f'tree traversal failed on key {comp}')
 
         # print(ref._parameters.keys())
         parameter_name = comps.pop()
@@ -83,7 +82,7 @@ class Shareable(nn.Module):
         # if task_key == "t1":
         #   return self.t0_mdl(x)
         # return None
-        return self.task_mdls[task_key](x)
+        return self.task_mdls[task_key](**x)
 
 class ConvBackbone(nn.Module):
     def __init__(self):

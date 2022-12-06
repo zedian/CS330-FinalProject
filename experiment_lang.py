@@ -86,6 +86,8 @@ class ClassificationDataGenerator:
         self.device = device
         self.batchSize = batchSize
 
+        self.rotor = 0
+
     def __len__(self):
         return len(self.dataset['y']) // self.batchSize
 
@@ -102,6 +104,11 @@ class ClassificationDataGenerator:
         y = T.tensor(self.dataset['y'] if cutoff is None else self.dataset[:cutoff]['y'],
                      device=self.device)
         return x,y
+
+    def get_next_batch(self):
+        result = self[self.rotor]
+        self.rotor = (self.rotor + 1) % len(self)
+        return result
 
 
 
@@ -164,6 +171,7 @@ class TaskAwareBert(TN.Module):
                 task: copy.deepcopy(bert)
                 for task in tasks
             }
+            self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
         elif topology == 'surgical':
             sharedParams = [x for x in bert.state_dict().keys()
                             if 'embedding' not in x]
@@ -175,7 +183,7 @@ class TaskAwareBert(TN.Module):
     @property
     def backbone_trainables(self):
         assert self.topology == 'shared'
-        return [x for x in self.backbone.state_dict().keys()
+        return [f'backbone.{x}' for x in self.backbone.state_dict().keys()
                 if 'embedding' not in x]
 
     def forward(self, x, task):
@@ -183,9 +191,9 @@ class TaskAwareBert(TN.Module):
             logits = self.internal_forward(task, **x)
             return logits
         elif self.topology == 'separate':
-            return self.taskHeads[task](**x).logits
+            return self.taskHeads[task](**x).logits[...,:1]
         elif self.topology == 'surgical':
-            return self.backbone(task, **x).logits
+            return self.backbone(x, task).logits[...,:1]
 
     def internal_forward(
         self,

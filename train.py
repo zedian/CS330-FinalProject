@@ -22,11 +22,10 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[
     task_grads = {}
 
     opt.zero_grad()
-    for task_name in tasks.keys():
-      task_iter = tasks[task_name]['train_iter']
-      task_loss_fn = tasks[task_name]['loss']
+    for task_name,task in tasks.items():
+      task_loss_fn = task['loss']
 
-      batch = next(task_iter)
+      batch = task['train_gen'].get_next_batch()
       x, y = batch
       x, y = x.to(DEVICE), y.to(DEVICE)
       pred = model(x, task_name)
@@ -38,8 +37,8 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[
       task_grads[task_name] = utils.sub_state_dicts(utils.clone_grads(model, param_keys), running_grads)
       task_losses[task_name] = loss.item()
 
-    taskLossesValuesText = [f"{x:.3f}" for x in task_losses.values()]
-    pbar.set_description(f"Losses: {'.'.join(taskLossesValuesText)}")
+    textLoss = ", ".join(f"{x:.3f}" for x in task_losses.values())
+    pbar.set_description(f"Losses: {textLoss}")
 
     opt.step()
 
@@ -70,18 +69,17 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEV
       model.train()
       task_losses = {}
       task_metrics = {}
-      task_eval_losses = {"t0": 0, "t1": 0}
-      task_eval_metrics = {"t0": 0, "t1": 0}
+      task_eval_losses = {key:0 for key in tasks.keys()}
+      task_eval_metrics = {key:0 for key in tasks.keys()}
 
       opt.zero_grad()
       for task_name in tasks.keys():
         task = tasks[task_name]
-        task_iter = task['train_iter']
         loss_fn = task['loss']
         predict_fn = task['predict']
         metric_fn = task['metric']
 
-        batch = next(task_iter)
+        batch = task['train_gen'].get_next_batch()
         x, y = batch
         x, y = x.to(DEVICE), y.to(DEVICE)
         logits = model(x, task_name)
@@ -102,7 +100,8 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEV
             loss_fn = task['loss']
             predict_fn = task['predict']
             metric_fn = task['metric']
-            for batch in task["eval_ds"]:
+            for iBatch in range(len(task["val_gen"])):
+              batch = task["val_gen"][iBatch]
               x, y = batch
               x, y = x.to(DEVICE), y.to(DEVICE)
               # x = []
@@ -120,12 +119,15 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEV
               task_eval_losses[task_name] += loss_fn(model(x, task_name), y).item()
               task_eval_metrics[task_name] += metric_fn(predict_fn(model(x, task_name)), y).clone().detach().cpu()
               # print(metric_fn(predict_fn(model(x, task_name)), y).clone().detach().cpu())
-            task_eval_losses[task_name] = task_eval_losses[task_name]/len(task["eval_ds"])
-            task_eval_metrics[task_name] = task_eval_metrics[task_name]/len(task["eval_ds"])
+            task_eval_losses[task_name] = task_eval_losses[task_name]/len(task["val_gen"])
+            task_eval_metrics[task_name] = task_eval_metrics[task_name]/len(task["val_gen"])
           eval_losses.append((step, task_eval_losses))
           eval_metrics.append((step, task_eval_metrics))
 
       step += 1
+      textLoss = ", ".join(f"{x:.3f}" for x in task_losses.values())
+      textMetric = ", ".join(f"{x:.3f}" for x in task_metrics.values())
+      pbar.set_description(f"Losses: {textLoss}; Metrics: {textMetric}")
       pbar.update(1)
     pbar.close()
     return losses, metrics, eval_losses, eval_metrics
