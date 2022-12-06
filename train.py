@@ -52,7 +52,10 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[
   return grads
 
 
-def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEVICE=None):
+def train_and_evaluate(*,
+                       model, tasks,
+                       steps=1000, lr=3e-4, eval_every=100,
+                       DEVICE=None, writers=None):
     opt = torch.optim.Adam(model.parameters(), lr=lr)
 
     if DEVICE is None:
@@ -86,7 +89,7 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEV
         loss = loss_fn(logits, y)
         loss.backward()
         task_losses[task_name] = loss.item()
-        task_metrics[task_name] = metric_fn(predict_fn(logits), y).clone().detach().cpu()
+        task_metrics[task_name] = metric_fn(logits, y).clone().detach().cpu()
 
       opt.step()
 
@@ -117,17 +120,25 @@ def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100, DEV
               # print(y)
               # print(model(x, task_name))
               task_eval_losses[task_name] += loss_fn(model(x, task_name), y).item()
-              task_eval_metrics[task_name] += metric_fn(predict_fn(model(x, task_name)), y).clone().detach().cpu()
-              # print(metric_fn(predict_fn(model(x, task_name)), y).clone().detach().cpu())
+              task_eval_metrics[task_name] += metric_fn(model(x, task_name), y).clone().detach().cpu()
             task_eval_losses[task_name] = task_eval_losses[task_name]/len(task["val_gen"])
             task_eval_metrics[task_name] = task_eval_metrics[task_name]/len(task["val_gen"])
           eval_losses.append((step, task_eval_losses))
           eval_metrics.append((step, task_eval_metrics))
+          if writers:
+            for taskKey in tasks.keys():
+              writers[taskKey].add_scalar(f"Loss/eval", task_eval_losses[taskKey], step)
+              writers[taskKey].add_scalar(f"Metric/eval", task_eval_metrics[taskKey], step)
 
       step += 1
       textLoss = ", ".join(f"{x:.3f}" for x in task_losses.values())
       textMetric = ", ".join(f"{x:.3f}" for x in task_metrics.values())
       pbar.set_description(f"Losses: {textLoss}; Metrics: {textMetric}")
       pbar.update(1)
+
+      if writers:
+        for taskKey in tasks.keys():
+          writers[taskKey].add_scalar(f"Loss/train", task_losses[taskKey], step)
+          writers[taskKey].add_scalar(f"Metric/train", task_metrics[taskKey], step)
     pbar.close()
     return losses, metrics, eval_losses, eval_metrics

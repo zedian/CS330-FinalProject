@@ -165,7 +165,7 @@ class TaskAwareBert(TN.Module):
                 task: TN.Linear(512, 1)
                 for task in tasks
             }
-            self.layers = TN.ModuleList(list(self.taskHeads.values()))
+            self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
         elif topology == 'separate':
             self.taskHeads = {
                 task: copy.deepcopy(bert)
