@@ -1,4 +1,5 @@
 import argparse, copy
+from pathlib import Path
 import numpy as N
 import pandas
 import torch as T
@@ -8,8 +9,6 @@ import torchvision as Tv
 import torch.utils.data as TUD
 import torch.nn.functional as TNF
 import torchmetrics.functional as TmF
-import pytorch_lightning as L
-import pytorch_lightning.callbacks.progress as LCP
 import datasets,transformers
 import tqdm
 
@@ -17,6 +16,17 @@ import tqdm
 import model
 from typing import List, Optional, Tuple, Union
 
+
+def get_paths(modelName):
+    pathOut = Path('cache/experiment-lang/')
+    pathPlots = pathOut / 'plots'
+
+    pathPlots.mkdir(exist_ok=True, parents=True)
+    return {
+        'out': pathOut,
+        'logs': pathOut,
+        'plots': pathPlots,
+    }
 
 
 def str_strip(s):
@@ -123,9 +133,14 @@ def model_layer_select(model):
 def get_loss(y, labels):
     return TNF.cross_entropy(y, labels)
 def get_acc(y, labels):
-    return TmF.accuracy(y.argmax(axis=-1), labels)
+    """
+    Binary accuracy!
+    """
+    return TmF.accuracy(y[...,0], labels)
 
-def get_model_and_tokenizer(modelName: str, Cls, **model_kwargs):
+def get_model_and_tokenizer(modelName: str,
+                            Cls=transformers.AutoModelForSequenceClassification,
+                            **model_kwargs):
 
     m = Cls.from_pretrained(modelName, **model_kwargs)
     if isinstance(m, transformers.GPT2LMHeadModel):
@@ -152,17 +167,23 @@ def get_stop_tokens(tokenizer, stop_string: str = '.') -> int:
 
 class TaskAwareBert(TN.Module):
 
-    def __init__(self, bert, tasks, topology):
+    def __init__(self, bert, tasks, topology, source):
         super().__init__()
 
         self.topology = topology
 
         assert topology in {'shared', 'separate', 'surgical'}
+        self.nHead = {
+            'tiny': 128,
+            'mini': 256,
+            'small': 512,
+            'medium': 512,
+        }[source]
 
         if topology == 'shared':
             self.backbone = bert
             self.taskHeads = {
-                task: TN.Linear(512, 1)
+                task: TN.Linear(self.nHead, 1)
                 for task in tasks
             }
             self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
