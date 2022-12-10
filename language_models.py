@@ -18,7 +18,7 @@ from typing import List, Optional, Tuple, Union
 
 
 def get_paths(modelName):
-    pathOut = Path('cache/experiment-lang/')
+    pathOut = Path(f'cache/experiment-{modelName}/')
     pathPlots = pathOut / 'plots'
 
     pathPlots.mkdir(exist_ok=True, parents=True)
@@ -236,13 +236,11 @@ class TaskAwareBert(TN.Module):
         output_hidden_states: Optional[bool] = None,
         return_dict: Optional[bool] = None,
     ):
-        r"""
-        labels (`torch.LongTensor` of shape `(batch_size,)`, *optional*):
-            Labels for computing the sequence classification/regression loss. Indices should be in `[0, ...,
-            config.num_labels - 1]`. If `config.num_labels == 1` a regression loss is computed (Mean-Square loss), If
-            `config.num_labels > 1` a classification loss is computed (Cross-Entropy).
         """
-        return_dict = return_dict if return_dict is not None else self.backbone.config.use_return_dict
+        Copied from BertForSequenceClassification
+        """
+        return_dict = return_dict if return_dict is not None else \
+            self.backbone.config.use_return_dict
 
         outputs = self.backbone.bert(
             input_ids,
@@ -260,6 +258,96 @@ class TaskAwareBert(TN.Module):
 
         pooled_output = self.backbone.dropout(pooled_output)
         return self.taskHeads[task](pooled_output)
+
+
+class TaskAwareRoberta(TN.Module):
+
+    def __init__(self,
+                 backbone, tasks, topology, source,
+                 sharing=None):
+        super().__init__()
+
+        self.topology = topology
+
+        assert topology in {'shared', 'separate', 'surgical'}
+
+        if topology == 'shared':
+            import transformers.models.roberta.modeling_roberta as Roberta
+
+            self.backbone = backbone
+            self.taskHeads = {
+                task: Roberta.RobertaClassificationHead(backbone.config)
+                for task in tasks
+            }
+            self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
+        elif topology == 'separate':
+            self.taskHeads = {
+                task: copy.deepcopy(backbone)
+                for task in tasks
+            }
+            self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
+        elif topology == 'surgical':
+            assert sharing is not None
+            if sharing[0].startswith('backbone.'):
+                sharing = [s[len('backbone.'):] for s in sharing]
+
+            self.backbone = model.Shareable(
+                mdl=backbone,
+                task_keys=tasks,
+                shared_params=sharing
+            )
+    @property
+    def backbone_trainables(self):
+        assert self.topology == 'shared'
+        return [f'backbone.{x}' for x in self.backbone.state_dict().keys()
+                if 'embedding' not in x]
+
+    def forward(self, x, task):
+        if self.topology == 'shared':
+            logits = self.internal_forward(task, **x)
+            return logits[...,:1]
+        elif self.topology == 'separate':
+            return self.taskHeads[task](**x).logits[...,:1]
+        elif self.topology == 'surgical':
+            return self.backbone(x, task).logits[...,:1]
+
+
+    def internal_forward(
+        self,
+        task: str,
+        input_ids: Optional[T.LongTensor] = None,
+        attention_mask: Optional[T.FloatTensor] = None,
+        token_type_ids: Optional[T.LongTensor] = None,
+        position_ids: Optional[T.LongTensor] = None,
+        head_mask: Optional[T.FloatTensor] = None,
+        inputs_embeds: Optional[T.FloatTensor] = None,
+        labels: Optional[T.LongTensor] = None,
+        output_attentions: Optional[bool] = None,
+        output_hidden_states: Optional[bool] = None,
+        return_dict: Optional[bool] = None,
+    ):
+        """
+        Copied from BertForSequenceClassification
+        """
+        return_dict = return_dict if return_dict is not None else \
+            self.backbone.config.use_return_dict
+
+        outputs = self.backbone.roberta(
+            input_ids,
+            attention_mask=attention_mask,
+            token_type_ids=token_type_ids,
+            position_ids=position_ids,
+            head_mask=head_mask,
+            inputs_embeds=inputs_embeds,
+            output_attentions=output_attentions,
+            output_hidden_states=output_hidden_states,
+            return_dict=return_dict,
+        )
+        sequence_output = outputs[0]
+        classifier = self.taskHeads[task]
+        logits = classifier(sequence_output)
+        return logits
+
 
 ### Training/Evaluation ###
 def eval_model(model, tokenizer, ds_val, device):
