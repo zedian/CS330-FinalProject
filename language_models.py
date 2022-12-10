@@ -39,10 +39,10 @@ def check_dataset_integrity(d):
         assert ' .' not in s, s
         assert '\n' not in s, s
         #assert '..' not in s, s
-def get_dataset(dataset: str):
+def get_dataset(dataset: str, sep_token):
 
 
-    if dataset == 'glue/cola':
+    if dataset == 'glue/cola' or dataset == 'glue/sst2':
         def transform_strip(row):
             s = row['sentence']
             s = str_strip(s)
@@ -59,8 +59,9 @@ def get_dataset(dataset: str):
         return d_train, d_val
 
     if dataset == 'glue/mrpc':
+        sep_token = " " + sep_token + " "
         def transform(row):
-            row['sentence'] = row['sentence1'] + ' ' + row['sentence2']
+            row['sentence'] = row['sentence1'] + sep_token + row['sentence2']
             return row
 
         d_train = datasets.load_dataset('glue', 'mrpc', split='train')
@@ -74,8 +75,9 @@ def get_dataset(dataset: str):
         return d_train, d_val
 
     if dataset == 'glue/qnli':
+        sep_token = " " + sep_token + " "
         def transform(row):
-            row['sentence'] = row['question'] + ' ' + row['sentence']
+            row['sentence'] = row['question'] + sep_token + row['sentence']
             return row
         d_train = datasets.load_dataset('glue', 'qnli', split='train')
         d_train = d_train.map(transform)
@@ -167,7 +169,9 @@ def get_stop_tokens(tokenizer, stop_string: str = '.') -> int:
 
 class TaskAwareBert(TN.Module):
 
-    def __init__(self, bert, tasks, topology, source):
+    def __init__(self,
+                 bert, tasks, topology, source,
+                 sharing=None):
         super().__init__()
 
         self.topology = topology
@@ -194,12 +198,14 @@ class TaskAwareBert(TN.Module):
             }
             self.taskHeadsList = TN.ModuleList(list(self.taskHeads.values()))
         elif topology == 'surgical':
-            sharedParams = [x for x in bert.state_dict().keys()
-                            if 'embedding' not in x]
+            assert sharing is not None
+            if sharing[0].startswith('backbone.'):
+                sharing = [s[len('backbone.'):] for s in sharing]
+
             self.backbone = model.Shareable(
                 mdl=bert,
                 task_keys=tasks,
-                shared_params=sharedParams
+                shared_params=sharing
             )
     @property
     def backbone_trainables(self):
@@ -311,5 +317,4 @@ if __name__ == '__main__':
     model, tokenizer = get_model_and_tokenizer(args.model, transformers.AutoModelForSequenceClassification)
     stop_tokens = get_stop_tokens(tokenizer)
     ds_train, ds_val = get_dataset('glue/mrpc')
-    finetune_selected(model, ds_train, ds_val
-                      , tokenizer, args.device)
+    finetune_selected(model, ds_train, ds_val, tokenizer, args.device)

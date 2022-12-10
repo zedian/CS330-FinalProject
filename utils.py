@@ -1,5 +1,6 @@
 import torch
 import torch.nn.functional as F
+import numpy as N
 
 
 def accuracy(y_hat, y):
@@ -43,3 +44,10 @@ def low_pass_filter(x, filter_size=25):
     x = torch.tensor(x) if not isinstance(x, torch.Tensor) else x
     x_smooth = F.conv1d(x[None], torch.ones(1, 1, filter_size) / filter_size)
     return x_smooth.numpy()
+
+
+def smooth(x, filter_size=25):
+    """
+    Mostly similar to the low pass filter above.
+    """
+    return N.convolve(x, N.ones((filter_size,)) / filter_size, mode='valid')

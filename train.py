@@ -1,11 +1,14 @@
 import torch
-from torch import nn
-from tqdm import tqdm
+import torch.nn as nn
+import torch.nn.functional as F
+from tqdm import tqdm, trange
+import numpy as N
 
 import utils
 
 
-def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[]):
+def get_gradients(*,
+                  model, tasks, steps=None, lr=3e-4, DEVICE=None, param_keys=[]):
   """Compute per-task gradients."""
 
   opt = torch.optim.Adam(model.parameters(), lr=lr)
@@ -13,11 +16,15 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[
   if DEVICE is None:
       DEVICE = model.device
 
-  step = 0
+  if not steps:
+    steps = max(len(task['train_gen']) for task in tasks.values())
   losses = []
-  grads = []
+  cosines = []
   pbar = tqdm(total=steps)
-  while step < steps:
+  taskName1, taskName2 = list(tasks.keys())
+  filteredParamKeys = []
+
+  for step in trange(steps):
     task_losses = {}
     task_grads = {}
 
@@ -42,14 +49,26 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4, DEVICE=None, param_keys=[
 
     opt.step()
 
-    losses.append(task_losses)
-    grads.append(task_grads)
+    cosine = []
+    filteredParamKeys = []
+    for k in param_keys:
+        g1 = task_grads[taskName1][k]
+        g2 = task_grads[taskName2][k]
+        if isinstance(g1, int) or isinstance(g2, int):
+            # Represents a task head. discard.
+            continue
 
-    step += 1
-    pbar.update(1)
+        c = torch.sum(F.normalize(torch.flatten(g1), dim=-1) *
+                      F.normalize(torch.flatten(g2), dim=-1)).item()
+        cosine.append(c)
+        filteredParamKeys.append(k)
+
+    losses.append(task_losses)
+    cosines.append(cosine)
+
   pbar.close()
 
-  return grads
+  return N.array(cosines), filteredParamKeys
 
 
 def train_and_evaluate(*,
