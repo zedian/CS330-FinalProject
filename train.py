@@ -1,8 +1,60 @@
+import copy
+
 import torch
 from torch import nn
 from tqdm import tqdm
 
 import utils
+
+
+def get_separated_gradients(*, model, tasks, steps=200, lr=3e-4):
+  """Compute per-task per-model gradients."""
+
+  models = {
+      task_name: copy.deepcopy(model)
+      for task_name in tasks
+  }
+  opts = {
+      task_name: torch.optim.SGD(models[task_name].parameters(), lr=lr)
+      for task_name in models
+  }
+
+  step = 0
+  losses = []
+  grads = []
+  pbar = tqdm(total=steps)
+  while step < steps:
+    task_losses = {}
+    task_grads = {}
+
+    for task_name in tasks.keys():
+      opt = opts[task_name]
+      model = models[task_name]
+
+      opt.zero_grad()
+      task_iter = tasks[task_name]['train_iter']
+      task_loss_fn = tasks[task_name]['loss']
+
+      batch = next(task_iter)
+      x, y = batch
+      pred = model(x, task_name)
+      loss = task_loss_fn(pred, y)
+
+      running_grads = utils.clone_grads(model)
+      loss.backward()
+      task_grads[task_name] = utils.sub_state_dicts(utils.clone_grads(model), running_grads)
+      task_losses[task_name] = loss.item()
+
+      opt.step()
+
+    losses.append(task_losses)
+    grads.append(task_grads)
+
+    step += 1
+    pbar.update(1)
+  pbar.close()
+
+  return grads, losses
 
 
 def get_gradients(*, model, tasks, steps=200, lr=3e-4):
@@ -13,10 +65,12 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4):
   step = 0
   losses = []
   grads = []
+  rgn = []
   pbar = tqdm(total=steps)
   while step < steps:
     task_losses = {}
     task_grads = {}
+    task_rgn = {}
 
     opt.zero_grad()
     for task_name in tasks.keys():
@@ -29,21 +83,34 @@ def get_gradients(*, model, tasks, steps=200, lr=3e-4):
       loss = task_loss_fn(pred, y)
 
       # avoid gradient accumulation bugs
-      running_grads = utils.clone_grads(model)
+      with torch.no_grad():
+        running_grads = utils.clone_grads(model)
       loss.backward()
-      task_grads[task_name] = utils.sub_state_dicts(utils.clone_grads(model), running_grads)
-      task_losses[task_name] = loss.item()
+      with torch.no_grad():
+        task_grads[task_name] = utils.sub_state_dicts(utils.clone_grads(model), running_grads)
+
+        # compute rgn
+        task_rgn[task_name] = {}
+        for pn, p in model.named_parameters():
+          gi = task_grads[task_name][pn]
+          if isinstance(gi, int) and gi == 0:
+            task_rgn[task_name][pn] = 0
+          else:
+            task_rgn[task_name][pn] = torch.norm(gi) / torch.norm(p)
+
+        task_losses[task_name] = loss.item()
 
     opt.step()
 
     losses.append(task_losses)
     grads.append(task_grads)
+    rgn.append(task_rgn)
 
     step += 1
     pbar.update(1)
   pbar.close()
 
-  return grads
+  return grads, losses, rgn
 
 
 def train_and_evaluate(*, model, tasks, steps=1000, lr=3e-4, eval_every=100):

@@ -27,6 +27,8 @@ class Shareable(nn.Module):
             for sp in shared_params
         })
 
+        # Offload parameters to CPU to avoid OOM
+        mdl = mdl.cpu()
         self.task_mdls = nn.ModuleDict({
             task_key: copy.deepcopy(mdl)
             for task_key in task_keys
@@ -35,10 +37,16 @@ class Shareable(nn.Module):
         for sp in shared_params:
             parameter = self.shared[k2s[sp]]
             for task_key in task_keys:
-                self._override_parameter(self.task_mdls[task_key], sp, parameter)
+                self._override_parameter(
+                    self.task_mdls[task_key],
+                    sp,
+                    parameter,
+                    parameter.device,
+                )
 
+        # TODO: move rest of parameters to original device
 
-    def _override_parameter(self, mdl, key, param):
+    def _override_parameter(self, mdl, key, param, device):
         # TODO(gmittal): this entire method is very sus
 
         assert isinstance(param, nn.Parameter), 'Must be an nn.Parameter'
@@ -57,7 +65,7 @@ class Shareable(nn.Module):
         parameter_name = comps.pop()
         assert len(comps) == 0
         del ref._parameters[parameter_name]
-        ref._parameters[parameter_name] = param
+        ref._parameters[parameter_name] = param.to(device)
 
 
     def forward(self, x, task_key):
@@ -88,7 +96,7 @@ class LinearBackbone(nn.Module):
     def __init__(self):
         super().__init__()
         self.net = nn.Sequential(
-            nn.Linear(28 * 28, 512),
+            nn.Linear(128, 512),
             nn.ReLU(),
             nn.Linear(512, 512),
             nn.ReLU(),
