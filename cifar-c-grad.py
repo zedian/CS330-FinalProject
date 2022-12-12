@@ -5,6 +5,7 @@ import torch
 
 import gc
 import torch
+import numpy as np
 from torch import nn
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
@@ -30,6 +31,12 @@ else:
 accuracy = Accuracy().to(DEVICE)
 # accuracy = Accuracy()
 corruptions=["gaussian_noise"]
+# corruptions = [
+#     'gaussian_noise', 'shot_noise', 'impulse_noise', 'defocus_blur',
+#     'glass_blur', 'motion_blur', 'zoom_blur', 'snow', 'frost', 'fog',
+#     'brightness', 'contrast', 'elastic_transform', 'pixelate',
+#     'jpeg_compression'
+#   ]
 
 cifarc_train = dataset.CIFAR10C(corruptions, flipped=False, ratio=0.2)
 cifarc_flipped_train = dataset.CIFAR10C(corruptions, flipped=True, ratio=0.2)
@@ -37,25 +44,35 @@ cifarc_flipped_train = dataset.CIFAR10C(corruptions, flipped=True, ratio=0.2)
 cifarc_valid = dataset.CIFAR10C(corruptions, flipped=False, train=False, ratio=0.2)
 cifarc_flipped_valid = dataset.CIFAR10C(corruptions, flipped=True, train=False, ratio=0.2)
 
+cifar_train = dataset.CIFAR10()
+
+cifar_valid = dataset.CIFAR10(train=False)
+
 cifarc_train_loader = DataLoader(cifarc_train, batch_size=batch_size, shuffle=True, drop_last=True)
 cifarc_flipped_train_loader = DataLoader(cifarc_flipped_train, batch_size=batch_size, shuffle=True, drop_last=True)
 
+cifar_train_loader = DataLoader(cifar_train, batch_size=batch_size, shuffle=True, drop_last=True)
+
 cifarc_valid_loader = DataLoader(cifarc_valid, batch_size=batch_size, shuffle=True, drop_last=True)
 cifarc_flipped_valid_loader = DataLoader(cifarc_flipped_valid, batch_size=batch_size, shuffle=True, drop_last=True)
+
+cifar_valid_loader = DataLoader(cifar_valid, batch_size=batch_size, shuffle=True, drop_last=True)
+
+cifar_iter = itertools.cycle(cifar_train_loader)
 cifarc_iter = itertools.cycle(cifarc_train_loader)
 cifarc_flipped_iter = itertools.cycle(cifarc_flipped_train_loader)
 
 tasks = {
     't0': {
         'train_iter': cifarc_iter,
-        'eval_ds': cifarc_valid_loader,
+        'eval_ds': cifar_valid_loader,
         'loss': lambda logits, labels: F.cross_entropy(logits, labels),
         'predict': lambda logits: logits,
         'metric': lambda yh, y: accuracy(yh, y),
     },
     't1': {
-        'train_iter': cifarc_flipped_iter,
-        'eval_ds': cifarc_flipped_valid_loader,
+        'train_iter': cifarc_iter,
+        'eval_ds': cifarc_valid_loader,
         'loss': lambda logits, labels: F.cross_entropy(logits, labels),
         'predict': lambda logits: logits,
         'metric': lambda yh, y: accuracy(yh, y),
@@ -77,8 +94,8 @@ tasks = {
 class MTL_resnet(nn.Module):
     def __init__(self):
         super().__init__()
-        self.net = resnet18()
-        self.net = nn.Sequential(*list(self.net.children())[:-1])
+        self.net = resnet18(pretrained=True)
+        # self.net = nn.Sequential(*list(self.net.children())[:-1])
         # mdl = MLPMixer(
         #         image_size = 32,
         #         channels = 3,
@@ -91,20 +108,20 @@ class MTL_resnet(nn.Module):
         # self.net = load_model("Sehwag2021Proxy_R18", dataset='cifar10', threat_model='Linf')
         # print(self.resnet_backbone)
         # self.resnet_backbone = nn.Sequential(*list(self.resnet_backbone.children())[:-1])
-        self.t0_head = nn.Linear(512, 10)
-        self.t1_head = nn.Linear(512, 10)
+        self.t0_head = nn.Linear(10, 10)
+        self.t1_head = nn.Linear(10, 10)
     
     def forward(self, x, task):
         # print(task)
         x = torch.permute(x, (0, 3, 1, 2)).float()
-        bb = self.net(x)
-        b, h, _, _ = bb.shape
+        # bb = self.net(x)
+        # b, h, _, _ = bb.shape
         if task == "t0":
-            # logits = self.t0_head(self.net(x))
-            logits = self.t0_head(bb.view(b, h))
+            logits = self.t0_head(self.net(x))
+            # logits = self.t0_head(bb.view(b, h))
         if task == "t1":
-            # logits = self.t1_head(self.net(x))
-            logits = self.t1_head(bb.view(b, h))
+            logits = self.t1_head(self.net(x))
+            # logits = self.t1_head(bb.view(b, h))
         # return t0_logits
         return logits
 
@@ -113,18 +130,19 @@ shared_resnet = MTL_resnet()
 shared_resnet.to(DEVICE)
 
 param_keys = []
-# for k, v in shared_resnet.named_parameters():
-#     # print(k)
-#     # if "conv1" in k:
-#     if "head" in k: 
-#         break
-#     param_keys.append(k[4:])
+for k, v in shared_resnet.named_parameters():
+    # print(k)
+    # if "conv1" in k:
+    if "head" in k: 
+        break
+    if "layer" not in k and "fc" not in k:
+        param_keys.append(k[4:])
 
 
 fully_shared_exp = train.train_and_evaluate(
     model=shared_resnet,
     tasks=tasks,
-    steps=2500,
+    steps=1000,
     lr=1e-4,
     eval_every=50,
     DEVICE=DEVICE
@@ -148,32 +166,32 @@ class SeparateMTL(nn.Module):
         #     task: load_model("Sehwag2021Proxy_R18", dataset='cifar10', threat_model='Linf')
         #     for task in task_keys
         # })
-        mdl1 = resnet18()
-        mdl1 = nn.Sequential(*list(mdl1.children())[:-1])
-        mdl2 = resnet18()
-        mdl2 = nn.Sequential(*list(mdl2.children())[:-1])
+        mdl1 = resnet18(pretrained=True)
+        # mdl1 = nn.Sequential(*list(mdl1.children())[:-1])
+        mdl2 = resnet18(pretrained=True)
+        # mdl2 = nn.Sequential(*list(mdl2.children())[:-1])
         self.backbones = nn.ModuleDict({
             "t0": mdl1,
             "t1": mdl2
         })
         self.heads = nn.ModuleDict({
-            task: nn.Linear(512, 10)
+            task: nn.Linear(10, 10)
             for task in task_keys
         })
     
     def forward(self, x, task):
         x = torch.permute(x, (0, 3, 1, 2)).float()
-        bb = self.backbones[task](x)
-        b, h, _, _ = bb.shape
-        # return self.heads[task](self.backbones[task](x))
-        return self.heads[task](bb.view((b, h)))
+        # bb = self.backbones[task](x)
+        # b, h, _, _ = bb.shape
+        return self.heads[task](self.backbones[task](x))
+        # return self.heads[task](bb.view((b, h)))
 
 separate_mtl = SeparateMTL(tasks.keys())
 separate_mtl.to(DEVICE)
 separate_exp = train.train_and_evaluate(
     model=separate_mtl,
     tasks=tasks,
-    steps=2500,
+    steps=1000,
     lr=1e-4,
     eval_every=50,
     DEVICE=DEVICE
@@ -189,11 +207,11 @@ separate_exp = train.train_and_evaluate(
 #     if "conv1" in k:
 #         param_keys.append(k)
 
-for k, v in shared_resnet.named_parameters():
-    if "head" in k: 
-        break
-    if "7" not in k and "conv" not in k:
-        param_keys.append(k[4:]) 
+# for k, v in shared_resnet.named_parameters():
+#     if "head" in k: 
+#         break
+#     if "7" not in k and "conv" not in k:
+#         param_keys.append(k[4:]) 
     
 # for k, v in shared_resnet.named_parameters():
 #     print(k)
@@ -228,19 +246,37 @@ for k, v in shared_resnet.named_parameters():
 # for k, v in shared_resnet.named_parameters():
 #     if "head" in k:
 #         break
-#     if "16.weight" not in k:
+#     if ".2.0" in k and "weight" in k:
 #         param_keys.append(k[4:])
+#     if ".10.0" in k and "weight" in k:
+#         param_keys.append(k[4:])
+#     if ".11.0" in k and "weight" in k:
+#         param_keys.append(k[4:])
+#     if ".12.0" in k and "weight" in k:
+#         param_keys.append(k[4:])
+#     if ".13.0" in k and "weight" in k:
+#         param_keys.append(k[4:])
+# for k, v in shared_resnet.named_parameters():
+#     # print(k)
+#     if ".12.0.fn" in k and "weight" in k:
+#         param_keys.append(k)
+#     if ".12.1.fn" in k and "weight" in k:
+#         param_keys.append(k)
+#     if ".13.0.fn" in k and "weight" in k:
+#         param_keys.append(k)
+#     if ".13.1.fn" in k and "weight" in k:
+#         param_keys.append(k)
 # for k, v in shared_resnet.named_parameters():
 #     if "16.weight" in k:
 #         param_keys.append(k)
 #     if "14.weight" in k:
 #         param_keys.append(k)
-#     if "net.13." in k and "fn" in k and "weight" in k:
+#     if "13.1.fn" in k and "weight" in k:
 #         param_keys.append(k)
-#     if "net.3." in k and "fn" in k and "weight" in k:
+#     if "13.0.fn" in k and "weight" in k:
 #         param_keys.append(k)
 # param_keys = ['backbone.' + k for k in list(shared_mtl.backbone.state_dict().keys())]
-# print(param_keys)
+print(param_keys)
 
 # print(param_keys)
 # grads = train.get_gradients(
@@ -252,7 +288,7 @@ for k, v in shared_resnet.named_parameters():
 #     param_keys=param_keys
 # )
 
-# # # del shared_resnet
+# del shared_resnet
 # heuristic_results = {}
 
 # # plots
@@ -286,7 +322,7 @@ for k, v in shared_resnet.named_parameters():
 #     ax.plot(cosine, color='teal', alpha=0.2)
 #     ax.plot(smooth_cos, color='teal')
 
-# fig.savefig("fig_resnet_shortcut.png")
+# fig.savefig("fig_conv_pretrained_resnet.png")
 
 # print(heuristic_results)
 class SurgicalMTL(nn.Module):
@@ -310,24 +346,24 @@ class SurgicalMTL(nn.Module):
         #     task_keys=list(task_keys),
         #     shared_params=param_keys
         # )
-        mdl1 = resnet18()
-        mdl1 = nn.Sequential(*list(mdl1.children())[:-1])
+        mdl1 = resnet18(pretrained=True)
+        # mdl1 = nn.Sequential(*list(mdl1.children())[:-1])
         self.backbone = model.Shareable(
             mdl=mdl1,
             task_keys=list(task_keys),
             shared_params=param_keys
         )
         self.heads = nn.ModuleDict({
-            task: nn.Linear(512, 10)
+            task: nn.Linear(10, 10)
             for task in task_keys
         })
     
     def forward(self, x, task):
         x = torch.permute(x, (0, 3, 1, 2)).float()
-        bb = self.backbone(x, task)
-        b, h, _, _ = bb.shape
-        # return self.heads[task](self.backbone(x, task))
-        return self.heads[task](bb.view((b, h)))
+        # bb = self.backbone(x, task)
+        # b, h, _, _ = bb.shape
+        return self.heads[task](self.backbone(x, task))
+        # return self.heads[task](bb.view((b, h)))
 mtl = SurgicalMTL(tasks.keys())
 mtl.to(DEVICE)
 # r = torch.cuda.memory_reserved(0)
@@ -336,7 +372,7 @@ mtl.to(DEVICE)
 surgical_exp = train.train_and_evaluate(
     model=mtl,
     tasks=tasks,
-    steps=2500,
+    steps=1000,
     lr=1e-4,
     eval_every=50,
     DEVICE=DEVICE
@@ -358,35 +394,44 @@ for task_name in tasks:
         tm = [(s, m[task_name]) for s, m in metrics]
         em = [(s, m[task_name]) for s, m in eval_metrics]
     
-        # plot
-        ax = axes[0]
-        tl_x, tl_y = zip(*tl)
-        ax.plot(tl_x, tl_y, label=f'{exp_name}_{task_name}')
-        ax.set_title('Train Loss')
-        ax.set_yscale('log')
-        ax.legend()
+        avg = np.array([e for _, e in em])[-1]
+        avgl = np.array([e for _, e in el])[-1]
 
-        ax = axes[1]
+        print(task_name + exp_name)
+        print("Last Acc:")
+        print(avg)
+
+        print("Last LOSS: ")
+        print(avgl)
+        # plot
+        # ax = axes[0]
+        # tl_x, tl_y = zip(*tl)
+        # ax.plot(tl_x, tl_y, label=f'{exp_name}_{task_name}')
+        # ax.set_title('Train Loss')
+        # ax.set_yscale('log')
+        # ax.legend()
+
+        ax = axes[0]
         el_x, el_y = zip(*el)
         ax.plot(el_x, el_y, label=f'{exp_name}_{task_name}')
         ax.set_title('Val Loss')
         ax.set_yscale('log')
         ax.legend()
 
-        ax = axes[2]
-        tm_x, tm_y = zip(*tm)
-        ax.plot(tm_x, tm_y, label=f'{exp_name}_{task_name}')
-        ax.set_title('Train Accuracy')
-        # ax.set_ylim([0.20, 1.])
-        ax.legend()
+        # ax = axes[2]
+        # tm_x, tm_y = zip(*tm)
+        # ax.plot(tm_x, tm_y, label=f'{exp_name}_{task_name}')
+        # ax.set_title('Train Accuracy')
+        # # ax.set_ylim([0.20, 1.])
+        # ax.legend()
 
-        ax = axes[3]
+        ax = axes[1]
         em_x, em_y = zip(*em)
         ax.plot(em_x, em_y, label=f'{exp_name}_{task_name}')
         ax.set_title('Val Accuracy')
         # ax.set_ylim([0.20, 1.])
         ax.legend()
-    fig.savefig("resnet_surgical" + task_name + ".png")
+    fig.savefig("resnet_cifar10" + task_name + ".png")
 
 
 # print(heuristic_results)

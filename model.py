@@ -27,7 +27,7 @@ class Shareable(nn.Module):
         # print(r-a)
         base_module_parameters = mdl.state_dict()
         k2s = {sp: '_'.join(sp.split('.')) for i, sp in enumerate(shared_params)}
-        # print(base_module_parameters)
+
         self.shared = nn.ParameterDict({
             k2s[sp]: nn.Parameter(base_module_parameters[sp].clone())
             for sp in shared_params
@@ -44,8 +44,8 @@ class Shareable(nn.Module):
         #         num_classes = 10
         #     )
 
-        mdl_clone = resnet18()
-        mdl_clone = nn.Sequential(*list(mdl_clone.children())[:-1])
+        mdl_clone = resnet18(pretrained=True)
+        # mdl_clone = nn.Sequential(*list(mdl_clone.children())[:-1])
         # mdl_clone = LinearBackbone()
         # self.t0_mdl = mdl
         # self.t1_mdl = mdl
