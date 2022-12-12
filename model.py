@@ -107,3 +107,20 @@ class LinearBackbone(nn.Module):
         # assume x.shape == (B, 1, 28, 28)
         x = x.view(x.shape[0], -1)
         return self.net(x).view(x.shape[0], -1)
+
+
+class MNISTLinearBackbone(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.net = nn.Sequential(
+            nn.Linear(28 * 28, 512),
+            nn.ReLU(),
+            nn.Linear(512, 512),
+            nn.ReLU(),
+            nn.Linear(512, 256),
+        )
+
+    def forward(self, x):
+        # assume x.shape == (B, 1, 28, 28)
+        x = x.view(x.shape[0], -1)
+        return self.net(x).view(x.shape[0], -1)
