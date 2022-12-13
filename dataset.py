@@ -108,40 +108,42 @@ class CIFAR10C:
   url = 'https://zenodo.org/record/2535967/files/CIFAR-10-C.tar'
   download_dir = './data'
 
-  random_seed = 42
+  random_seed = 2
 
-  def __init__(self, corruption=None, ratio=0.2, flipped=False, train=True):
-    if os.path.exists(self.download_dir):
-      print('CIFAR10-C already downloaded')
+  def __init__(self, corruption=None, ratio=0.2, flipped=False, small=True, train=True):
+    if not small:
+      if os.path.exists(self.download_dir):
+        print('CIFAR10-C already downloaded')
+      else:
+        download_and_extract_archive(self.url, self.download_dir)
+
+      # Load data
+      path_fn = lambda c: os.path.join(self.download_dir, 'CIFAR-10-C', f'{c}.npy')
+      if corruption is None:
+        paths = [path_fn(c) for c in self.corruptions]
+      elif isinstance(corruption, str):
+        assert corruption in self.corruptions, f'corruption must be in {self.corruptions}'
+        paths = [path_fn(corruption)]
+      elif isinstance(corruption, list):
+        assert all(c in self.corruptions for c in corruption), f'corruptions must be in {self.corruptions}'
+        paths = [path_fn(c) for c in corruption]
+      else:
+        raise ValueError('corruption must be None, str, or list')
+
+      label_path = path_fn('labels')
+      labels = np.load(label_path)
+      self.data = []
+      self.targets = []
+      for path in paths:
+        assert os.path.exists(path), f'{path} does not exist'
+        data = np.load(path)
+        self.data.append(data)
+        self.targets.append(labels)
+
+      self.data = np.concatenate(self.data, axis=0)
+      self.targets = np.concatenate(self.targets, axis=0)
     else:
-      download_and_extract_archive(self.url, self.download_dir)
-
-    # Load data
-    path_fn = lambda c: os.path.join(self.download_dir, 'CIFAR-10-C', f'{c}.npy')
-    if corruption is None:
-      paths = [path_fn(c) for c in self.corruptions]
-    elif isinstance(corruption, str):
-      assert corruption in self.corruptions, f'corruption must be in {self.corruptions}'
-      paths = [path_fn(corruption)]
-    elif isinstance(corruption, list):
-      assert all(c in self.corruptions for c in corruption), f'corruptions must be in {self.corruptions}'
-      paths = [path_fn(c) for c in corruption]
-    else:
-      raise ValueError('corruption must be None, str, or list')
-
-    label_path = path_fn('labels')
-    labels = np.load(label_path)
-    self.data = []
-    self.targets = []
-    for path in paths:
-      assert os.path.exists(path), f'{path} does not exist'
-      data = np.load(path)
-      self.data.append(data)
-      self.targets.append(labels)
-
-    self.data = np.concatenate(self.data, axis=0)
-    self.targets = np.concatenate(self.targets, axis=0)
-    # self.data, self.targets = load_cifar10c(n_examples=10000, corruptions=corruption, severity=5)
+      self.data, self.targets = load_cifar10c(n_examples=10000, corruptions=corruption, severity=5)
     x_train, x_test, y_train, y_test = train_test_split(self.data, 
                                                           self.targets, test_size=ratio, 
                                                           random_state=self.random_seed)
